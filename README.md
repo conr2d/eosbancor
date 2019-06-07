@@ -30,7 +30,7 @@ $ cleos push action eosbancor init '[["4,EOS", "eosio.token"]]' -p eosbancor@act
 Second, create a connector and transfer token for initial balance. Here, smart token is issued on `conr2d.token` contract and its issuer is `conr2d`. The symbol of smart token is `HOBL`.
 
 ```console
-$ cleos push action eosbancor connect '[["0,HOBL", "conr2d.token"], {"quantity": "10000.0000 EOS", "contract": "eosio.token"}, 0.5]' -p eosio@active
+$ cleos push action eosbancor connect '[["0,HOBL", "conr2d.token"], {"quantity": "10000.0000 EOS", "contract": "eosio.token"}, 0.5]' -p conr2d@active
 $ cleos push action eosio.token transfer '["conr2d", "eosbancor", "10000.0000 EOS", "HOBL@conr2d.token"]' -p conr2d@active
 $ cleos set account permission conr2d active eosbancor --add-code
 ```
