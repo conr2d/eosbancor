@@ -10,6 +10,8 @@ public:
 
    struct [[eosio::table]] config {
       extended_symbol connected;
+
+      EOSLIB_SERIALIZE(config, (connected))
    };
 
    typedef multi_index<"connector"_n, connector> connectors;
