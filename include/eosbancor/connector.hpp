@@ -68,8 +68,6 @@ struct connector {
    double weight = .5;
    bool activated = false;
 
-   uint64_t primary_key() const { return smart.get_symbol().code().raw(); }
-
    struct converted {
       extended_asset value;
       double ratio;
@@ -83,9 +81,13 @@ struct connector {
       double dS = S * (std::pow(1. + dC / C, weight) - 1.);
       if (dS < 0) dS = 0;
 
-      balance += from;
+      auto conversion_rate = ((int64_t)dS) / dS;
+      balance += {
+         from.quantity.amount - int64_t(from.quantity.amount * (1 - conversion_rate)),
+         from.get_extended_symbol()
+      };
 
-      return { extended_asset(asset(dS, to.get_symbol()), to.get_contract()), ((int64_t)dS) / dS };
+      return { {int64_t(dS), to}, conversion_rate };
    }
 
    converted convert_from_smart(const extended_asset& from, const extended_symbol& to) {
@@ -98,8 +100,10 @@ struct connector {
 
       balance.quantity.amount -= int64_t(-dC);
 
-      return { extended_asset(asset(-dC, to.get_symbol()), to.get_contract()), ((int64_t)-dC) / (-dC) };
+      return { {int64_t(-dC), to}, ((int64_t)-dC) / (-dC) };
    }
+
+   uint64_t primary_key() const { return smart.get_symbol().code().raw(); }
 
    EOSLIB_SERIALIZE(connector, (smart)(balance)(weight)(activated))
 };
