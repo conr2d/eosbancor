@@ -10,13 +10,13 @@ public:
 
    struct base_config {
       extended_asset connected; // if amount != 0, it's considered as fixed amount of conversion fee
-      uint16_t rate; // per mille
+      uint16_t rate; // permyriad
 
       bool is_exempted()const { return connected.quantity.amount == 0 && rate == 0; }
       extended_asset get_fee(extended_asset value)const {
          int64_t fee = 0;
          if (rate != 0) {
-            int64_t p = 1000 / rate;
+            int64_t p = 10000 / rate;
             fee = (value.quantity.amount + p - 1) / p;
          }
          fee += connected.quantity.amount;
