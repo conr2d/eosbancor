@@ -24,7 +24,7 @@ It requires deployed [eosio.token](https://github.com/EOSIO/eosio.contracts/tree
 First, initialize contract by setting connected token. (`init` can be called only once)
 
 ```console
-$ cleos push action eosbancor init '[["4,EOS", "eosio.token"]]' -p eosbancor@active
+$ cleos push action eosbancor init '["eosio", ["4,EOS", "eosio.token"]]' -p eosbancor@active
 ```
 
 Second, create a connector and transfer token for initial balance. Here, smart token is issued on `conr2d.token` contract and its issuer is `conr2d`. The symbol of smart token is `HOBL`.
