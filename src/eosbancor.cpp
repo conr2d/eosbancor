@@ -9,7 +9,7 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
 
    auto transferred = extended_asset(quantity, get_first_receiver());
 
-   if (transferred.get_extended_symbol() == cfg.get().connected.get_extended_symbol()) {
+   if (transferred.get_extended_symbol() == cfg.get().get_connected_symbol()) {
       // initialize connector or buy smart
       auto at_pos = memo.find('@');
       check(at_pos != string::npos, "extended symbol code requires `@`");
@@ -67,7 +67,7 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
 
       conn.modify(it, same_payer, [&](auto& c) {
          check(c.activated, "connector not initialized");
-         auto connected_out = c.convert_from_smart(transferred, cfg.get().connected.get_extended_symbol());
+         auto connected_out = c.convert_from_smart(transferred, cfg.get().get_connected_symbol());
 
          charges chrg(_self, transferred.contract.value);
          auto cit = chrg.find(transferred.quantity.symbol.code().raw());
@@ -82,12 +82,12 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
          auto refund = asset(int64_t(transferred.quantity.amount * (1 - connected_out.ratio)), transferred.quantity.symbol);
          token(transferred.contract, _self).transfer(_self, issuer, transferred.quantity - refund);
          token(transferred.contract).retire(transferred.quantity - refund);
-         token(cfg.get().connected.contract, _self).transfer(_self, from, quant_after_fee.quantity);
+         token(cfg.get().connected_contract, _self).transfer(_self, from, quant_after_fee.quantity);
          if (refund.amount > 0) {
             token(transferred.contract, _self).transfer(_self, from, refund, "refund not converted amount");
          }
          if (fee.quantity.amount > 0) {
-            token(cfg.get().connected.contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
+            token(cfg.get().connected_contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
          }
          //print("effective_price = ", asset(connected_out.value.quantity.amount / (transferred.quantity.amount - refund.amount) * pow(10, transferred.quantity.symbol.precision()), connected_out.value.quantity.symbol));
       });
@@ -99,7 +99,7 @@ void eosbancor::init(name owner, extended_symbol connected) {
 
    configuration cfg(_self, _self.value);
    check(!cfg.exists(), "already initialized");
-   cfg.set({extended_asset{0, connected}, 0, owner}, _self);
+   cfg.set({0, {0, connected.get_symbol()}, connected.get_contract(), owner}, _self);
 }
 
 void eosbancor::connect(extended_symbol smart, extended_asset balance, double weight) {
@@ -108,7 +108,7 @@ void eosbancor::connect(extended_symbol smart, extended_asset balance, double we
 
    configuration cfg(_self, _self.value);
    check(cfg.exists(), "contract not initialized");
-   check(cfg.get().connected.get_extended_symbol() == balance.get_extended_symbol(), "balance should be paid by connected token");
+   check(cfg.get().get_connected_symbol() == balance.get_extended_symbol(), "balance should be paid by connected token");
 
    connectors conn(_self, smart.get_contract().value);
    auto it = conn.find(smart.get_symbol().code().raw());
@@ -125,14 +125,14 @@ void eosbancor::setcharge(int16_t rate, std::optional<extended_asset> fixed, std
 
    configuration cfg(_self, _self.value);
    check(cfg.exists(), "initialize contract before setting charge");
-   check(!fixed || cfg.get().connected.get_extended_symbol() == fixed->get_extended_symbol(), "represent conversion fee in connected token");
+   check(!fixed || cfg.get().get_connected_symbol() == fixed->get_extended_symbol(), "represent conversion fee in connected token");
 
    if (!smart) {
       check(rate >= 0 && rate <= 1000, "rate needs to be in the range of 0-1000 (per mille)");
       auto it = cfg.get();
       it.rate = static_cast<uint16_t>(rate);
       if (fixed)
-         it.connected = *fixed;
+         it.connected = fixed->quantity;
       cfg.set(it, _self);
    } else {
       charges chrg(_self, smart->get_contract().value);
@@ -149,13 +149,13 @@ void eosbancor::setcharge(int16_t rate, std::optional<extended_asset> fixed, std
          chrg.emplace(_self, [&](auto& c) {
             c.smart = *smart;
             c.rate = static_cast<uint16_t>(rate);
-            c.connected = fixed ? *fixed : extended_asset(0, cfg.get().connected.get_extended_symbol());
+            c.connected = fixed ? fixed->quantity : asset{0, cfg.get().connected.symbol};
          });
       } else {
          chrg.modify(it, same_payer, [&](auto& c) {
             c.rate = static_cast<uint16_t>(rate);
             if (fixed)
-               c.connected = *fixed;
+               c.connected = fixed->quantity;
          });
       }
    }
