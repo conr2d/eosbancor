@@ -2,5 +2,5 @@
 
 mkdir -p build
 pushd build
-cmake ..
+cmake .. $@
 make -j$(nproc)

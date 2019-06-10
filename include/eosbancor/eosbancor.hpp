@@ -13,11 +13,22 @@ public:
       asset connected; // if amount != 0, it's considered as fixed amount of conversion fee
 
       bool is_exempted()const { return connected.amount == 0 && rate == 0; }
+
       extended_asset get_fee(extended_asset value)const {
          int64_t fee = 0;
          if (rate != 0) {
             int64_t p = 10000 / rate;
             fee = (value.quantity.amount + p - 1) / p;
+         }
+         fee += connected.amount;
+         return {fee, value.get_extended_symbol()};
+      }
+
+      extended_asset get_required_fee(extended_asset value)const {
+         int64_t fee = 0;
+         if (rate != 0) {
+            int64_t p = 10000 / rate;
+            fee = int64_t((value.quantity.amount + connected.amount) * p / double(p - 1) + 0.9) - value.quantity.amount;
          }
          fee += connected.amount;
          return {fee, value.get_extended_symbol()};

@@ -1,4 +1,6 @@
 #include <eosbancor/eosbancor.hpp>
+#include <eosbancor/types.hpp>
+#include <eosbancor/dlog.hpp>
 
 void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
    if (from == _self)
@@ -7,10 +9,12 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
    configuration cfg(_self, _self.value);
    check(cfg.exists(), "contract not initialized");
 
-   auto transferred = extended_asset(quantity, get_first_receiver());
-
-   if (transferred.get_extended_symbol() == cfg.get().get_connected_symbol()) {
-      // initialize connector or buy smart
+   extended_asset target;
+   auto space_pos = memo.find(' ');
+   if (space_pos != string::npos) {
+      from_string(target, memo);
+      check(target.quantity.amount > 0, "specified amount should be positive");
+   } else {
       auto at_pos = memo.find('@');
       check(at_pos != string::npos, "extended symbol code requires `@`");
 
@@ -18,44 +22,94 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
       auto sym_code = symbol_code(memo.substr(0, at_pos));
       auto precision = token(contract).get_supply(sym_code).symbol.precision();
 
-      connectors conn(_self, contract.value);
-      auto it = conn.find(sym_code.raw());
+      target = {0, {{sym_code, precision}, contract}};
+   }
+
+   auto transferred = extended_asset(quantity, get_first_receiver());
+
+   if (transferred.get_extended_symbol() == cfg.get().get_connected_symbol()) {
+      // initialize connector or buy smart
+      connectors conn(_self, target.contract.value);
+      auto it = conn.find(target.quantity.symbol.code().raw());
       check(it != conn.end(), "connector not exists");
 
       conn.modify(it, same_payer, [&](auto& c) {
          if (c.activated) {
-            charges chrg(_self, contract.value);
-            auto cit = chrg.find(sym_code.raw());
-            auto fee = cit != chrg.end() ? cit->get_fee(transferred)
-                     : !cfg.get().is_exempted() ? cfg.get().get_fee(transferred)
-                     : extended_asset(0, transferred.get_extended_symbol());
+            if (target.quantity.amount == 0) {
+               bool exempted = true;
+               extended_asset fee = {0, transferred.get_extended_symbol()};
 
-            auto quant_after_fee = transferred - fee;
-            check(quant_after_fee.quantity.amount > 0, "paid token not enough after charging fee");
+               charges chrg(_self, target.contract.value);
+               auto cit = chrg.find(target.quantity.symbol.code().raw());
 
-            auto smart_issued = c.convert_to_smart(quant_after_fee, {symbol(sym_code, precision), contract});
-            check(smart_issued.value.quantity.amount > 0, "paid token not enough after charging fee");
+               if (cit != chrg.end()) {
+                  exempted = cit->is_exempted();
+                  if (!exempted) fee = cit->get_fee(transferred);
+               } else {
+                  exempted = cfg.get().is_exempted();
+                  if (!exempted) fee = cfg.get().get_fee(transferred);
+               }
+               if (!exempted && fee.quantity.amount <= 0) fee.quantity.amount = 1;
 
-            auto issuer = token(contract).get_issuer(sym_code);
-            token(contract).issue(issuer, smart_issued.value.quantity);
-            token(contract).transfer(issuer, from, smart_issued.value.quantity);
+               auto quant_after_fee = transferred - fee;
+               check(quant_after_fee.quantity.amount > 0, "paid token not enough after charging fee");
 
-            auto refund = asset(int64_t(quant_after_fee.quantity.amount * (1 - smart_issued.ratio)), quant_after_fee.quantity.symbol);
-            if (refund.amount > 0) {
-               auto overcharged = int64_t(fee.quantity.amount * (1 - smart_issued.ratio));
-               if (overcharged < 0) overcharged = 0;
-               fee.quantity.amount -= overcharged;
-               refund.amount += overcharged;
-               token(transferred.contract, _self).transfer(_self, from, refund, "refund not converted amount");
+               auto smart_issued = c.convert_to_smart(quant_after_fee, target.get_extended_symbol());
+               check(smart_issued.value.quantity.amount > 0, "paid token not enough after charging fee");
+
+               auto issuer = token(target.contract).get_issuer(target.quantity.symbol.code());
+               token(target.contract).issue(issuer, smart_issued.value.quantity);
+               token(target.contract).transfer(issuer, from, smart_issued.value.quantity);
+
+               auto refund = asset(int64_t(quant_after_fee.quantity.amount * (1 - smart_issued.ratio)), quant_after_fee.quantity.symbol);
+               if (refund.amount > 0) {
+                  auto overcharged = int64_t(fee.quantity.amount * (1 - smart_issued.ratio));
+                  if (overcharged < 0) overcharged = 0;
+                  fee.quantity.amount -= overcharged;
+                  refund.amount += overcharged;
+                  token(transferred.contract, _self).transfer(_self, from, refund, "refund not converted amount");
+               }
+               if (fee.quantity.amount > 0) {
+                  token(transferred.contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
+               }
+               dlog("effective_price = ", asset((quant_after_fee.quantity.amount - refund.amount) / smart_issued.value.quantity.amount * pow(10, smart_issued.value.quantity.symbol.precision()), quantity.symbol));
+            } else {
+               auto connected_required = c.convert_to_exact_smart(transferred.get_extended_symbol(), target);
+
+               bool exempted = true;
+               extended_asset fee = {0, transferred.get_extended_symbol()};
+
+               charges chrg(_self, target.contract.value);
+               auto cit = chrg.find(target.quantity.symbol.code().raw());
+
+               if (cit != chrg.end()) {
+                  exempted = cit->is_exempted();
+                  if (!exempted) fee = cit->get_required_fee({connected_required.delta, connected_required.value.contract});
+               } else {
+                  exempted = cfg.get().is_exempted();
+                  if (!exempted) fee = cfg.get().get_required_fee({connected_required.delta, connected_required.value.contract});
+               }
+               if (!exempted && fee.quantity.amount <= 0) fee.quantity.amount = 1;
+
+               auto refund = transferred.quantity - (connected_required.delta + fee.quantity);
+               check(refund.amount >= 0, "paid token not enough to convert to specified amount");
+
+               auto issuer = token(target.contract).get_issuer(target.quantity.symbol.code());
+               token(target.contract).issue(issuer, target.quantity);
+               token(target.contract).transfer(issuer, from, target.quantity);
+
+               if (refund.amount > 0) {
+                  token(transferred.contract, _self).transfer(_self, from, refund, "refund not converted amount");
+               }
+               if (fee.quantity.amount > 0) {
+                  token(transferred.contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
+               }
+               dlog("effective_price = ", asset((transferred.quantity.amount - refund.amount) / target.quantity.amount * pow(10, target.quantity.symbol.precision()), quantity.symbol));
             }
-            if (fee.quantity.amount > 0) {
-               token(transferred.contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
-            }
-            //print("effective_price = ", asset((quant_after_fee.quantity.amount - refund.amount) / smart_issued.value.quantity.amount * pow(10, smart_issued.value.quantity.symbol.precision()), quantity.symbol));
          } else {
             auto issuer = token(c.smart.get_contract()).get_issuer(c.smart.get_symbol().code());
             check(from == issuer, "issuer only can initialize connector");
-            check(transferred == c.balance, "initial balance not match");
+            check(transferred.quantity == c.balance, "initial balance not match");
             c.activated = true;
          }
       });
@@ -66,30 +120,74 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
       check(it != conn.end(), "connector not exists");
 
       conn.modify(it, same_payer, [&](auto& c) {
-         check(c.activated, "connector not initialized");
-         auto connected_out = c.convert_from_smart(transferred, cfg.get().get_connected_symbol());
+         if (target.quantity.amount == 0) {
+            check(c.activated, "connector not initialized");
+            auto connected_out = c.convert_from_smart(transferred, cfg.get().get_connected_symbol());
 
-         charges chrg(_self, transferred.contract.value);
-         auto cit = chrg.find(transferred.quantity.symbol.code().raw());
-         auto fee = cit != chrg.end() ? cit->get_fee(connected_out.value)
-                  : !cfg.get().is_exempted() ? cfg.get().get_fee(connected_out.value)
-                  : extended_asset(0, connected_out.value.get_extended_symbol());
+            bool exempted = true;
+            extended_asset fee = {0, target.get_extended_symbol()};
 
-         auto quant_after_fee = connected_out.value - fee;
-         check(quant_after_fee.quantity.amount > 0, "paid token not enough after charging fee");
+            charges chrg(_self, transferred.contract.value);
+            auto cit = chrg.find(transferred.quantity.symbol.code().raw());
 
-         auto issuer = token(transferred.contract).get_issuer(transferred.quantity.symbol.code());
-         auto refund = asset(int64_t(transferred.quantity.amount * (1 - connected_out.ratio)), transferred.quantity.symbol);
-         token(transferred.contract, _self).transfer(_self, issuer, transferred.quantity - refund);
-         token(transferred.contract).retire(transferred.quantity - refund);
-         token(cfg.get().connected_contract, _self).transfer(_self, from, quant_after_fee.quantity);
-         if (refund.amount > 0) {
-            token(transferred.contract, _self).transfer(_self, from, refund, "refund not converted amount");
+            if (cit != chrg.end()) {
+               exempted = cit->is_exempted();
+               if (!exempted) fee = cit->get_fee(connected_out.value);
+            } else {
+               exempted = cfg.get().is_exempted();
+               if (!exempted) fee = cfg.get().get_fee(connected_out.value);
+            }
+            if (!exempted && fee.quantity.amount <= 0) fee.quantity.amount = 1;
+
+            auto quant_after_fee = connected_out.value - fee;
+            check(quant_after_fee.quantity.amount > 0, "paid token not enough after charging fee");
+
+            auto issuer = token(transferred.contract).get_issuer(transferred.quantity.symbol.code());
+            auto refund = asset(int64_t(transferred.quantity.amount * (1 - connected_out.ratio)), transferred.quantity.symbol);
+            token(transferred.contract, _self).transfer(_self, issuer, transferred.quantity - refund);
+            token(transferred.contract).retire(transferred.quantity - refund);
+            token(cfg.get().connected_contract, _self).transfer(_self, from, quant_after_fee.quantity);
+            if (refund.amount > 0) {
+               token(transferred.contract, _self).transfer(_self, from, refund, "refund not converted amount");
+            }
+            if (fee.quantity.amount > 0) {
+               token(cfg.get().connected_contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
+            }
+            dlog("effective_price = ", asset(quant_after_fee.quantity.amount / (transferred.quantity.amount - refund.amount) * pow(10, transferred.quantity.symbol.precision()), connected_out.value.quantity.symbol));
+         } else {
+            bool exempted = true;
+            extended_asset fee = {0, target.get_extended_symbol()};
+
+            charges chrg(_self, transferred.contract.value);
+            auto cit = chrg.find(transferred.quantity.symbol.code().raw());
+
+            if (cit != chrg.end()) {
+               exempted = cit->is_exempted();
+               if (!exempted) fee = cit->get_required_fee(target);
+            } else {
+               exempted = cfg.get().is_exempted();
+               if (!exempted) fee = cfg.get().get_required_fee(target);
+            }
+            if (!exempted && fee.quantity.amount <= 0) fee.quantity.amount = 1;
+
+            auto smart_required = c.convert_exact_from_smart(transferred.get_extended_symbol(), target + fee);
+            target.quantity = smart_required.delta - fee.quantity;
+
+            auto refund = transferred.quantity - smart_required.value.quantity;
+            check(refund.amount >= 0, "paid token not enough to convert to specified amount");
+
+            auto issuer = token(transferred.contract).get_issuer(transferred.quantity.symbol.code());
+            token(transferred.contract, _self).transfer(_self, issuer, transferred.quantity - refund);
+            token(transferred.contract).retire(transferred.quantity - refund);
+            token(target.contract, _self).transfer(_self, from, target.quantity);
+            if (refund.amount > 0) {
+               token(transferred.contract, _self).transfer(_self, from, refund, "refund not converted amount");
+            }
+            if (fee.quantity.amount > 0) {
+               token(target.contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
+            }
+            dlog("effective_price = ", asset(target.quantity.amount / (transferred.quantity.amount - refund.amount) * pow(10, transferred.quantity.symbol.precision()), target.quantity.symbol));
          }
-         if (fee.quantity.amount > 0) {
-            token(cfg.get().connected_contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
-         }
-         //print("effective_price = ", asset(connected_out.value.quantity.amount / (transferred.quantity.amount - refund.amount) * pow(10, transferred.quantity.symbol.precision()), connected_out.value.quantity.symbol));
       });
    }
 }
@@ -115,7 +213,7 @@ void eosbancor::connect(extended_symbol smart, extended_asset balance, double we
    check(it == conn.end(), "existing connector");
    conn.emplace(issuer, [&](auto& c) {
       c.smart = smart;
-      c.balance = balance;
+      c.balance = balance.quantity;
       c.weight = weight;
    });
 }
