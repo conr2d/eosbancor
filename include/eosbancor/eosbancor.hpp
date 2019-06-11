@@ -78,4 +78,7 @@ public:
 
    [[eosio::action]]
    void setowner(name owner);
+
+private:
+   extended_asset get_fee(const extended_asset& value, const extended_asset& smart, const config& c, bool required = false);
 };
