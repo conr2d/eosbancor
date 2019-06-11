@@ -72,7 +72,8 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
                if (fee.quantity.amount > 0) {
                   token(transferred.contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
                }
-               dlog("effective_price = ", asset((quant_after_fee.quantity.amount - refund.amount) / smart_issued.value.quantity.amount * pow(10, smart_issued.value.quantity.symbol.precision()), quantity.symbol));
+               dlog("conversion_rate = 0.", int64_t(smart_issued.ratio * 10000), ", ");
+               dlog("effective_price = ", asset((quant_after_fee.quantity.amount - refund.amount) * pow(10, smart_issued.value.quantity.symbol.precision()) / smart_issued.value.quantity.amount, quantity.symbol));
             } else {
                auto connected_required = c.convert_to_exact_smart(transferred.get_extended_symbol(), target);
 
@@ -104,7 +105,8 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
                if (fee.quantity.amount > 0) {
                   token(transferred.contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
                }
-               dlog("effective_price = ", asset((transferred.quantity.amount - refund.amount) / target.quantity.amount * pow(10, target.quantity.symbol.precision()), quantity.symbol));
+               dlog("conversion_rate = 0.", int64_t(connected_required.ratio * 10000), ", ");
+               dlog("effective_price = ", asset(connected_required.delta.amount * pow(10, target.quantity.symbol.precision()) / target.quantity.amount, quantity.symbol));
             }
          } else {
             auto issuer = token(c.smart.get_contract()).get_issuer(c.smart.get_symbol().code());
@@ -153,7 +155,8 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
             if (fee.quantity.amount > 0) {
                token(cfg.get().connected_contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
             }
-            dlog("effective_price = ", asset(quant_after_fee.quantity.amount / (transferred.quantity.amount - refund.amount) * pow(10, transferred.quantity.symbol.precision()), connected_out.value.quantity.symbol));
+            dlog("conversion_rate = 0.", int64_t(connected_out.ratio * 10000), ", ");
+            dlog("effective_price = ", asset(connected_out.delta.amount * pow(10, transferred.quantity.symbol.precision()) / (transferred.quantity.amount - refund.amount), connected_out.value.quantity.symbol));
          } else {
             bool exempted = true;
             extended_asset fee = {0, target.get_extended_symbol()};
@@ -186,7 +189,8 @@ void eosbancor::on_transfer(name from, name to, asset quantity, string memo) {
             if (fee.quantity.amount > 0) {
                token(target.contract, _self).transfer(_self, cfg.get().owner, fee.quantity, "conversion fee");
             }
-            dlog("effective_price = ", asset(target.quantity.amount / (transferred.quantity.amount - refund.amount) * pow(10, transferred.quantity.symbol.precision()), target.quantity.symbol));
+            dlog("conversion_rate = 0.", int64_t(smart_required.ratio * 10000), ", ");
+            dlog("effective_price = ", asset(smart_required.delta.amount * pow(10, transferred.quantity.symbol.precision()) / (transferred.quantity.amount - refund.amount), target.quantity.symbol));
          }
       });
    }

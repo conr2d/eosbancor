@@ -2,17 +2,13 @@
 
 #include <eosio/print.hpp>
 
+namespace eosio {
+
 template<typename... Args>
-void dlog(Args&&... args) {
-
-#ifdef NDEBUG
-   static constexpr bool debug = false;
-#else
-   static constexpr bool debug = true;
+inline void dlog(Args&&... args) {
+#ifndef NDEBUG
+   eosio::print(std::forward<Args>(args)...);
 #endif
-
-   if (debug)
-      eosio::print(std::forward<Args>(args)...);
 }
 
-
+} /// namespace eosio
