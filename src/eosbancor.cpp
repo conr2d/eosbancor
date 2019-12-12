@@ -204,7 +204,7 @@ void eosbancor::setcharge(int16_t rate, std::optional<extended_asset> fixed, std
    check(!fixed || cfg.get().get_connected_symbol() == fixed->get_extended_symbol(), "represent conversion fee in connected token");
 
    if (!smart) {
-      check(rate >= 0 && rate <= 1000, "rate needs to be in the range of 0-1000 (per mille)");
+      check(rate >= 0 && rate <= 10000, "rate needs to be in the range of 0-10000 (permyriad)");
       auto it = cfg.get();
       it.rate = static_cast<uint16_t>(rate);
       if (fixed)
@@ -220,7 +220,7 @@ void eosbancor::setcharge(int16_t rate, std::optional<extended_asset> fixed, std
          return;
       }
 
-      check(rate >= 0 && rate <= 1000, "rate needs to be in the range of 0-1000 (per mille)");
+      check(rate >= 0 && rate <= 10000, "rate needs to be in the range of 0-10000 (permyriad)");
       if (it == chrg.end()) {
          chrg.emplace(_self, [&](auto& c) {
             c.smart = *smart;
